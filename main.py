@@ -19,7 +19,7 @@ class ModelController():
                        
         #Setting up GUI and webcam
         self.tkInterWindow=tkInterWindow                
-        self.camera=cv2.VideoCapture(1)                
+        self.camera=cv2.VideoCapture(0)                
         self.width=self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height=self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
         
@@ -39,7 +39,8 @@ class ModelController():
 
     def loadAllModels(self):
         self.noseTeethModel=load_model('./Weights/teeth_close_open.h5')
-        self.noseTeethModel.summary()
+        #self.noseTeethModel.summary()
+        self.handGestureModel=load_model("./Weights/Rock_Paper_Sessior.h5")
 
     def setUpTheCanvases(self):        
         #Setting up the main canvase
@@ -58,10 +59,10 @@ class ModelController():
         self.quitButton = tk.Button(self.buttonsFrame, text= "Quit", command= self.tkInterWindow.destroy)
         self.quitButton.pack(side=tk.BOTTOM, padx=5, pady=5)
         #Stop Button
-        self.stopButton=tk.Button(self.buttonsFrame,text="Stop Button",command=None)
+        self.stopButton=tk.Button(self.buttonsFrame,text="Stop Button",command=self.stopButtonFunction)
         self.stopButton.pack(side=tk.BOTTOM,padx=5,pady=5)
         #Making the Hand Gesture Runner Button
-        self.handGestureButton=tk.Button(self.buttonsFrame,text="Hand Gesture",command=None)
+        self.handGestureButton=tk.Button(self.buttonsFrame,text="Hand Gesture",command=self.preRunHandGestureModel)
         self.handGestureButton.pack(side=tk.BOTTOM,padx=5,pady=5)
         #Making the Nose Teeth Runner Button
         self.NoseTeethButton=tk.Button(self.buttonsFrame,text="Nose Teeth",command=self.preRunFaceNoseModel)
@@ -70,6 +71,22 @@ class ModelController():
         #Packing the button frame
         self.buttonsFrame.pack(side=tk.RIGHT,padx=5,pady=5)
     
+    def stopButtonFunction(self):     
+        self.NoseTeethButton["state"]="normal"   
+        self.handGestureButton["state"]="normal"        
+
+        #Placing a black image on the main canvas        
+        self.blackImgArray=np.ones( (int(self.height),int(self.width))  )*0
+        self.mainCanvas.delete("all")
+        self.image = Image.fromarray(self.blackImgArray) # to PIL format
+        self.image = ImageTk.PhotoImage(self.image)  # to ImageTk format                                
+        self.mainCanvas.create_image(0, 0, anchor=tk.NW, image=self.image)                
+        self.controllerFlag=0
+        self.faceOrNose=0
+
+
+
+####################################### NOSE TEETH RELATED CODES STARTS ######################################## 
     def preRunFaceNoseModel(self):
         #Disabling the other buttons
         self.NoseTeethButton["state"]="disable"
@@ -186,9 +203,7 @@ class ModelController():
         elif self.faceOrNose==1:
             self.faceOrNose=0       
 
-
-    def cursorMovementWithNose(self):
-        
+    def cursorMovementWithNose(self):        
         if self.noseCoOrdinate is not None and self.faceCenterCoOrdinate is not None:
             xDisplacement=self.faceCenterCoOrdinate[0]-self.noseCoOrdinate[0]
             yDisplacement=self.faceCenterCoOrdinate[1]-self.noseCoOrdinate[1]
@@ -198,8 +213,127 @@ class ModelController():
             # print(f"xdisplacement is {xDisplacement}")
             # print(f"ydisplacement is {yDisplacement}")
             # print("*******************************************")
-
     
+    def cursorClickingWithTeeth(self):
+        print("One Click Occurred")
+####################################### NOSE TEETH RELATED CODES ENDS########################################
+
+####################################### HAND GESTURE RELATED CODES STARTS########################################
+    def preRunHandGestureModel(self):
+        #Disabling the other buttons
+        self.NoseTeethButton["state"]="disable"
+        self.handGestureButton["state"]="disable"
+        #Flag indicating  facenose model                        
+        self.controllerFlag=1
+        #Running face nose model
+        self.runHandGestureModel()
+    
+    def  runHandGestureModel(self):
+        #Reading img from camera                
+        ret, frame = self.camera.read()                
+        #Running Yolo Algorithm it will generate the nose detected image named self.image        
+        self.runYoloAlgorithmHandGesture(frame)        
+        self.mainCanvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+        if self.controllerFlag==1:
+            self.tkInterWindow.after(self.interval, self.runHandGestureModel)
+        else:
+            self.faceOrNose=0
+            return
+    
+    def runYoloAlgorithmHandGesture(self,img):                
+        
+        # Processing The Image and making it into a blob
+        img = cv2.resize(img, None, fx=1.0, fy=1.0, interpolation=cv2.INTER_AREA)
+        height, width, channels = img.shape
+        blob = cv2.dnn.blobFromImage(img, 0.00392 , (288, 288), (0, 0, 0), True, crop=False)
+        #making the yolo nn architecture
+        
+        net = cv2.dnn.readNet("Weights\yolov4-tiny-hand_best.weights", "cfg_file\yolov4-tiny-testing.cfg")            
+
+        #Getting reference to the output layers
+        layer_names = net.getLayerNames()
+        output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+        #Making an array to contain the name of objects in final layer
+        classes = [""]                                
+        #Passing the blob to the neural network
+        net.setInput(blob)
+        #Collecting the feature maps from the output layers
+        outs = net.forward(output_layers)
+        class_ids = []
+        confidences = []
+        boxes = []        
+        for out in outs:            
+            for detection in out:
+                #The three lines below is used for finding confidence value
+                scores=detection[5:] 
+                class_id = np.argmax(scores)
+                confidence = scores[class_id]
+                if confidence>0.3:
+                    #It means we are considering a detected object                    
+                        center_x = int(detection[0] * width)
+                        center_y = int(detection[1] * height)                                            
+                        w = int(detection[2] * width)
+                        h = int(detection[3] * height)
+                        # Rectangle coordinates
+                        x = int(center_x - w / 2)
+                        y = int(center_y - h / 2)                                                
+                        boxes.append([x, y, w, h])
+                        confidences.append(float(confidence))
+                        class_ids.append(class_id)            
+            # The boxes array contain the detected boxes            
+            # We further get the indexes of boxes after Non Max Suppression
+            indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)                        
+            font = cv2.FONT_HERSHEY_PLAIN            
+            #Now drawing the boxes from the images            
+            
+            for i in range(len(boxes)):
+                if i in indexes:
+                    try:
+                        x, y, w, h = boxes[i]
+                        #print("x1,y1 is= "+str(x)+", "+str(y))
+                        label = str(classes[class_ids[i]])
+                        #print("Label ",label)
+                        color = (0,0,0)                                                
+                        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+                        cv2.putText(img, label, (x, y + 30), font, 3, color, 2)                        
+                        croppedImg = img[y:y+h, x:x+w]
+                        croppedImg=cv2.resize(croppedImg,(100,100))                                                
+                        croppedImg=cv2.resize(croppedImg,(224,224))                                                
+                        #BINARIZING THE CROPPED IMAGE STARTS                        
+                        croppedImg=cv2.cvtColor(croppedImg, cv2.COLOR_BGR2GRAY)
+                        _, croppedImg = cv2.threshold(croppedImg,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)                                                            
+                        
+                        croppedImg[croppedImg==0]=100
+                        croppedImg[croppedImg==255]=200
+                        croppedImg[croppedImg==100]=255
+                        croppedImg[croppedImg==200]=0
+                        cv2.imshow("Hand Gesture",croppedImg)
+                        #BINARIZING THE CROPPED IMAGE ENDS
+                        
+                        #If this is for face then we store face co-ordinate
+                        croppedImg = np.stack((croppedImg,)*3, axis=-1)                                
+                        croppedImg=np.reshape(croppedImg,(1,224,224,3))                        
+                        croppedImg=croppedImg/255                        
+                        y=self.handGestureModel.predict(croppedImg)                                   
+                        print(f"y={np.argmax(y)}")
+                                
+                        #else if this is for nose we store the nose co=ordinate
+
+                        #cv2.imshow("CroppedImage",croppedImg)
+
+                        #Now Performing the cursor displacement function
+                        
+                    except:
+                        pass
+            self.image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # to RGB
+            self.image = Image.fromarray(self.image) # to PIL format
+            self.image = ImageTk.PhotoImage(self.image)  # to ImageTk format  
+
+    #Clicking + movement
+    def controlCursorWithHandGesture(gestureNo):
+        print(f"Got the gesture {gestureNo}")
+####################################### HAND GESTURE RELATED CODES ENDS########################################
+
 
 
 
